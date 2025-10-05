@@ -39,9 +39,6 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
 
-# --------------------------
-# 1) Load data
-# --------------------------
 X_df = pd.read_pickle("Xtrain1.pkl")
 y = np.load("Ytrain1.npy")
 
@@ -49,27 +46,14 @@ if "Skeleton_Features" in X_df.columns:
     X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
 elif all(np.issubdtype(dt, np.number) for dt in X_df.dtypes) and X_df.shape[1] == 132:
     X = X_df.to_numpy(dtype=float)
-else:
-    raise ValueError(
-        "Xtrain1.pkl not in expected format: need 'Skeleton_Features' column of 132-length arrays "
-        "or 132 numeric columns."
-    )
 
 assert X.ndim == 2 and X.shape[1] == 132, f"Expected (n,132), got {X.shape}"
 assert X.shape[0] == y.shape[0], "X and y sample counts differ"
 
-
-# --------------------------
-# 2) Stratified hold-out split
-# --------------------------
 X_train, X_val, y_train, y_val = train_test_split(
     X, y, test_size=0.20, random_state=42, stratify=y
 )
 
-
-# --------------------------
-# 3) Helper: readable feature names (means first 66, stds last 66)
-# --------------------------
 def feature_names():
     return (
         [f"mean_kp{kp}_{ax}" for kp in range(33) for ax in ("x", "y")] +
@@ -77,9 +61,6 @@ def feature_names():
     )
 
 
-# --------------------------
-# 4) Pipelines
-# --------------------------
 pipelines = {
     "rf": Pipeline([
         ("scaler", StandardScaler()),
@@ -95,7 +76,6 @@ pipelines = {
     ]),
     "svc_rbf": Pipeline([
         ("scaler", StandardScaler()),
-        # probability=True enables ROC/PR plots; slightly slower but fine here
         ("clf", SVC(kernel="rbf", class_weight="balanced", probability=True))
     ]),
     "logreg": Pipeline([
@@ -118,10 +98,6 @@ pipelines = {
     ]),
 }
 
-
-# --------------------------
-# 5) Param grids
-# --------------------------
 param_grids = {
     "rf": {
         "clf__n_estimators": [300, 600],
@@ -159,15 +135,11 @@ param_grids = {
 }
 
 
-# --------------------------
-# 6) Train, evaluate, collect scores
-# --------------------------
 scores = {}
 best_model = None
 best_name = None
 best_val_f1 = -np.inf
 
-# For plotting MLP curves later
 mlp_loss_curve = None
 mlp_val_scores = None
 
@@ -192,7 +164,6 @@ for name, pipe in pipelines.items():
     print(f"{name} — Validation F1_macro: {f1:.4f}")
     print("Best params:", grid.best_params_)
 
-    # Capture MLP curves from the best-estimator MLP (if this iteration is MLP)
     if name == "mlp":
         mlp_est = grid.best_estimator_.named_steps["clf"]
         if hasattr(mlp_est, "loss_curve_"):
@@ -200,7 +171,6 @@ for name, pipe in pipelines.items():
         if hasattr(mlp_est, "validation_scores_"):
             mlp_val_scores = mlp_est.validation_scores_
 
-    # Track the overall best model
     if f1 > best_val_f1:
         best_val_f1 = f1
         best_model = grid.best_estimator_
@@ -208,10 +178,6 @@ for name, pipe in pipelines.items():
 
 print(f"\nBest model: {best_name} | F1_macro (val): {best_val_f1:.4f}")
 
-
-# --------------------------
-# 9) Plot: MLP Training Loss + Validation Score on the SAME graph
-# --------------------------
 if (mlp_loss_curve is not None) and (mlp_val_scores is not None):
     n = min(len(mlp_loss_curve), len(mlp_val_scores))
     epochs = np.arange(1, n + 1)
@@ -243,14 +209,10 @@ elif mlp_loss_curve is not None:
     plt.tight_layout(); plt.show()
 
 
-# --------------------------
-# 11) Feature importance or permutation importance
-# --------------------------
 feat_names = feature_names()
 clf = best_model.named_steps["clf"]
 
 if hasattr(clf, "feature_importances_"):
-    # Tree-based: show top 15 importances
     importances = clf.feature_importances_
     idx = np.argsort(importances)[-15:]
     plt.figure(figsize=(8, 5))
@@ -259,7 +221,6 @@ if hasattr(clf, "feature_importances_"):
     plt.tight_layout()
     plt.show()
 else:
-    # Model-agnostic: permutation importance on hold-out set
     try:
         r = permutation_importance(best_model, X_val, y_val, scoring="f1_macro", n_repeats=10, n_jobs=-1)
         idx = np.argsort(r.importances_mean)[-15:]
@@ -272,9 +233,6 @@ else:
         print("Permutation importance failed:", e)
 
 
-# --------------------------
-# 12) PCA 2D scatter (sanity-check separability)
-# --------------------------
 X2 = PCA(n_components=2, random_state=42).fit_transform(X)
 plt.figure(figsize=(6, 5))
 for lab, name in zip([0, 1, 2], ["E1", "E2", "E5"]):
