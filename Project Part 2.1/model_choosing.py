@@ -44,12 +44,7 @@ y = np.load("Ytrain1.npy")
 
 X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
 
-assert X.ndim == 2 and X.shape[1] == 132, f"Expected (n,132), got {X.shape}"
-assert X.shape[0] == y.shape[0], "X and y sample counts differ"
-
-X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.20, random_state=42, stratify=y
-)
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size = 0.20, random_state = 42, stratify = y)
 
 pipelines = {
     "rf": Pipeline([
@@ -85,7 +80,7 @@ pipelines = {
 }
 
 param_grids = {
-    "rf": {
+    "rf": {#random forest
         "clf__n_estimators": [300, 600],
         "clf__max_depth": [None, 12, 18],
         "clf__min_samples_split": [2, 4],
@@ -96,14 +91,11 @@ param_grids = {
         "clf__min_samples_split": [2, 4],
         "clf__max_features": ["sqrt", "log2", None],
     },
-    "svc_rbf": {
+    "svc_rbf": {#support vector machine with RBF kernel
         "clf__C": [0.5, 1, 2, 4],
         "clf__gamma": ["scale", 0.05, 0.02, 0.01],
     },
-    "logreg": {
-        "clf__C": [0.5, 1, 2],
-    },
-    "mlp": {
+    "mlp": {#multilayer perceptron
         "clf__hidden_layer_sizes": [(128, 64), (256, 128)],
         "clf__alpha": [1e-4, 1e-3],
     },
@@ -113,7 +105,6 @@ param_grids = {
         "clf__p": [1, 2],  # 1=Manhattan, 2=Euclidean
     },
 }
-
 
 scores = {}
 best_model = None
