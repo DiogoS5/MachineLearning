@@ -189,29 +189,7 @@ elif mlp_loss_curve is not None:
     plt.tight_layout(); plt.show()
 
 
-feat_names = feature_names()
 clf = best_model.named_steps["clf"]
-
-if hasattr(clf, "feature_importances_"):
-    importances = clf.feature_importances_
-    idx = np.argsort(importances)[-15:]
-    plt.figure(figsize=(8, 5))
-    plt.barh(np.array(feat_names)[idx], importances[idx])
-    plt.title(f"Top 15 Feature Importances — {best_name}")
-    plt.tight_layout()
-    plt.show()
-else:
-    try:
-        r = permutation_importance(best_model, X_val, y_val, scoring="f1_macro", n_repeats=10, n_jobs=-1)
-        idx = np.argsort(r.importances_mean)[-15:]
-        plt.figure(figsize=(8, 5))
-        plt.barh(np.array(feat_names)[idx], r.importances_mean[idx])
-        plt.title(f"Top 15 Permutation Importances — {best_name}")
-        plt.tight_layout()
-        plt.show()
-    except Exception as e:
-        print("Permutation importance failed:", e)
-
 
 X2 = PCA(n_components=2, random_state=42).fit_transform(X)
 plt.figure(figsize=(6, 5))
