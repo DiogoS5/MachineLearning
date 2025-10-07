@@ -60,10 +60,6 @@ pipelines = {
         ("scaler", StandardScaler()),
         ("clf", ExtraTreesClassifier(random_state=42, n_jobs=-1))
     ]),
-    "gboost": Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", GradientBoostingClassifier(random_state=42))
-    ]),
     "svc_rbf": Pipeline([
         ("scaler", StandardScaler()),
         ("clf", SVC(kernel="rbf", class_weight="balanced", probability=True))
