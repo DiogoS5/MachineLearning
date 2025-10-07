@@ -12,13 +12,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-# ----------------------------
-# Config
-# ----------------------------
 DATA_PKL = "Xtrain1.pkl"
 LABEL_NPY = "Ytrain1.npy"
 N_FEATURES = 132
-RUN_TSNE = True  # set False if it’s too slow
 
 CLASS_NAME = {
     0: "Brushing Hair (E1)",
@@ -34,9 +30,6 @@ KP = {
     "R_hand_set": [16, 18, 20, 22],
 }
 
-# ----------------------------
-# Load data
-# ----------------------------
 X_df = pd.read_pickle(DATA_PKL)
 y = np.load(LABEL_NPY)
 X = np.vstack(X_df["Skeleton_Features"].values).astype(float)
@@ -46,9 +39,7 @@ if X.shape[0] != len(y) or X.shape[1] != N_FEATURES:
 
 y_txt = np.vectorize(CLASS_NAME.get)(y.astype(int))
 
-# ----------------------------
-# Helpers
-# ----------------------------
+
 def kp_cols(kp_idx: int):
     """Return column indices (x,y) for a keypoint kp_idx under your 132-feature layout."""
     x_col = 66 + 2 * kp_idx
@@ -76,9 +67,7 @@ def scatter_by_class(Z2: np.ndarray, y: np.ndarray, title: str, xlabel=None, yla
     plt.tight_layout()
     plt.show()
 
-# ----------------------------
-# Linear projection (formerly PCA)
-# ----------------------------
+
 X_std = StandardScaler().fit_transform(X)
 
 linear_proj = PCA(n_components=2, random_state=42)
@@ -92,17 +81,7 @@ scatter_by_class(
     ylabel=f"Component 2 ({expl[1]:.1f}%)",
 )
 
-# ----------------------------
-# (Optional) Non-linear projection (t-SNE)
-# ----------------------------
-if RUN_TSNE:
-    tsne = TSNE(n_components=2, perplexity=30, learning_rate="auto", init="pca", random_state=42)
-    X_tsne = tsne.fit_transform(X_std)
-    scatter_by_class(X_tsne, y, title="t-SNE (2D): Class Clusters")
 
-# ----------------------------
-# Movement summaries (magnitudes)
-# ----------------------------
 df_move = pd.DataFrame({
     "Exercise": y_txt,
     "Left Shoulder":  mag_for_kp(X, KP["L_shoulder"]),
@@ -115,7 +94,6 @@ df_move = pd.DataFrame({
     "Right Hand":     mag_for_group(X, KP["R_hand_set"]),
 })
 
-# Bar chart of class-wise medians by region
 melt = df_move.melt(id_vars="Exercise", var_name="Region", value_name="Magnitude")
 regions = melt["Region"].unique().tolist()
 xpos = np.arange(len(regions))
@@ -133,7 +111,6 @@ plt.legend(title="Exercise")
 plt.tight_layout()
 plt.show()
 
-# Left vs Right scatter comparisons
 pairs = [
     ("Left Shoulder",  "Right Shoulder",  "Shoulders: Left vs Right"),
     ("Left Hip",       "Right Hip",       "Hips: Left vs Right"),
