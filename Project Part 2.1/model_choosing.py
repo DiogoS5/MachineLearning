@@ -100,12 +100,6 @@ param_grids = {
         "clf__min_samples_split": [2, 4],
         "clf__max_features": ["sqrt", "log2", None],
     },
-    "gboost": {
-        "clf__n_estimators": [200, 400],
-        "clf__learning_rate": [0.05, 0.1],
-        "clf__max_depth": [2, 3, 5],
-        "clf__subsample": [1.0, 0.8],
-    },
     "svc_rbf": {
         "clf__C": [0.5, 1, 2, 4],
         "clf__gamma": ["scale", 0.05, 0.02, 0.01],

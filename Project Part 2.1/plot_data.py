@@ -13,18 +13,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-# -----------------------------
-# 1) Load data
-# -----------------------------
 X_df = pd.read_pickle("Xtrain1.pkl")
 y = np.load("Ytrain1.npy")
 
-if "Skeleton_Features" in X_df.columns:
-    X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
-elif all(np.issubdtype(dt, np.number) for dt in X_df.dtypes) and X_df.shape[1] == 132:
-    X = X_df.to_numpy(dtype=float)
-else:
-    raise ValueError("Expected 'Skeleton_Features' column (len 132 arrays) or 132 numeric columns.")
+X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
 
 assert X.shape[0] == y.shape[0] and X.shape[1] == 132
 
