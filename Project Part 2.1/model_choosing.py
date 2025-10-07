@@ -42,10 +42,7 @@ from sklearn.neighbors import KNeighborsClassifier
 X_df = pd.read_pickle("Xtrain1.pkl")
 y = np.load("Ytrain1.npy")
 
-if "Skeleton_Features" in X_df.columns:
-    X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
-elif all(np.issubdtype(dt, np.number) for dt in X_df.dtypes) and X_df.shape[1] == 132:
-    X = X_df.to_numpy(dtype=float)
+X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
 
 assert X.ndim == 2 and X.shape[1] == 132, f"Expected (n,132), got {X.shape}"
 assert X.shape[0] == y.shape[0], "X and y sample counts differ"
@@ -53,13 +50,6 @@ assert X.shape[0] == y.shape[0], "X and y sample counts differ"
 X_train, X_val, y_train, y_val = train_test_split(
     X, y, test_size=0.20, random_state=42, stratify=y
 )
-
-def feature_names():
-    return (
-        [f"mean_kp{kp}_{ax}" for kp in range(33) for ax in ("x", "y")] +
-        [f"std_kp{kp}_{ax}"  for kp in range(33) for ax in ("x", "y")]
-    )
-
 
 pipelines = {
     "rf": Pipeline([
