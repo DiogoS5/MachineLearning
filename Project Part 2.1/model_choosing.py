@@ -64,7 +64,6 @@ pipelines = {
     ]),
     "svc_rbf": Pipeline([
         ("scaler", StandardScaler()),
-        ("pca", PCA()),
         ("clf", SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=42))
     ]),
     "logreg": Pipeline([
@@ -215,9 +214,7 @@ elif mlp_loss_curve is not None:
     plt.grid(True, alpha=0.3)
     plt.tight_layout(); plt.show()
 
-# ------------------------------
-# Learning curve for the best model (GroupKFold on TRAIN)
-# ------------------------------
+
 train_sizes, train_scores, val_scores = learning_curve(
     best_model, X_train, y_train,
     groups=g_train,
@@ -242,28 +239,21 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-# ------------------------------
-# Permutation importance (on TEST)
-# ------------------------------
-try:
-    perm = permutation_importance(
-        best_model, X_test, y_test, scoring="f1_macro",
-        n_repeats=10, random_state=42, n_jobs=-1
-    )
-    imp_idx = np.argsort(perm.importances_mean)[::-1][:15]
-    plt.figure(figsize=(7,5))
-    plt.barh(range(len(imp_idx)), perm.importances_mean[imp_idx][::-1], xerr=perm.importances_std[imp_idx][::-1])
-    plt.yticks(range(len(imp_idx)), [f"f{j}" for j in imp_idx[::-1]])
-    plt.xlabel("Mean ΔF1 (permutation)")
-    plt.title("Top-15 Permutation Importances (TEST)")
-    plt.tight_layout()
-    plt.show()
-except Exception as e:
-    print("Permutation importance failed:", e)
 
-# ------------------------------
-# PCA (fit on TRAIN), scatter whole dataset for visualization
-# ------------------------------
+perm = permutation_importance(
+    best_model, X_test, y_test, scoring="f1_macro",
+    n_repeats=10, random_state=42, n_jobs=-1
+)
+imp_idx = np.argsort(perm.importances_mean)[::-1][:15]
+plt.figure(figsize=(7,5))
+plt.barh(range(len(imp_idx)), perm.importances_mean[imp_idx][::-1], xerr=perm.importances_std[imp_idx][::-1])
+plt.yticks(range(len(imp_idx)), [f"f{j}" for j in imp_idx[::-1]])
+plt.xlabel("Mean ΔF1 (permutation)")
+plt.title("Top-15 Permutation Importances (TEST)")
+plt.tight_layout()
+plt.show()
+
+
 scaler_for_pca = StandardScaler().fit(X_train)
 X_train_std = scaler_for_pca.transform(X_train)
 X_test_std  = scaler_for_pca.transform(X_test)
@@ -281,53 +271,3 @@ plt.xlabel("PC1"); plt.ylabel("PC2")
 plt.grid(True, alpha=0.2)
 plt.tight_layout()
 plt.show()
-
-# ------------------------------
-# ROC & PR curves (One-vs-Rest) — only if model supports probabilities/scores
-# ------------------------------
-def get_scores_for_ovr(model, X_data):
-    # Prefer decision_function (SVM margins), else predict_proba
-    if hasattr(model, "decision_function"):
-        s = model.decision_function(X_data)
-        # shape (n_samples, n_classes) expected; if 1D, convert
-        if s.ndim == 1:
-            s = np.column_stack([1 - s, s])
-        return s
-    if hasattr(model, "predict_proba"):
-        return model.predict_proba(X_data)
-    return None
-
-scores_mat = get_scores_for_ovr(best_model, X_test)
-if scores_mat is not None:
-    classes = np.sort(np.unique(y))
-    y_test_bin = label_binarize(y_test, classes=classes)
-
-    # ROC
-    plt.figure(figsize=(6.2,5.2))
-    for i, c in enumerate(classes):
-        fpr, tpr, _ = roc_curve(y_test_bin[:, i], scores_mat[:, i])
-        plt.plot(fpr, tpr, label=f"Class {c} (AUC={auc(fpr,tpr):.3f})")
-    plt.plot([0,1],[0,1], linestyle="--")
-    plt.xlabel("FPR"); plt.ylabel("TPR")
-    plt.title(f"ROC Curves — {best_name} (TEST)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-    # PR
-    plt.figure(figsize=(6.2,5.2))
-    ap_scores = []
-    for i, c in enumerate(classes):
-        prec, rec, _ = precision_recall_curve(y_test_bin[:, i], scores_mat[:, i])
-        ap = average_precision_score(y_test_bin[:, i], scores_mat[:, i])
-        ap_scores.append(ap)
-        plt.plot(rec, prec, label=f"Class {c} (AP={ap:.3f})")
-    plt.xlabel("Recall"); plt.ylabel("Precision")
-    plt.title(f"Precision–Recall Curves — {best_name} (TEST)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-else:
-    print(f"ROC/PR skipped for {best_name}: model has neither decision_function nor predict_proba.")
