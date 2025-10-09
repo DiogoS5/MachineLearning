@@ -1,26 +1,11 @@
-# model_choosing.py — full script (plots only, saves nothing)
-# - Uses ONLY Xtrain1.pkl and Ytrain1.npy
-# - Patient-level outer split (4 patients for test), inner GroupKFold CV on train
-# - Models: RF, ExtraTrees, GradientBoosting, SVM(RBF), Logistic, MLP (early stopping), kNN
-# - GridSearchCV scoring='f1_macro'
-# - Plots: per-model F1 bar, confusion matrix for best, MLP loss+val,
-#          learning curve (grouped), permutation importance, PCA 2D scatter,
-#          ROC & PR (if supported)
-
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split, GridSearchCV, learning_curve, GroupKFold
-from sklearn.preprocessing import StandardScaler, label_binarize
+from sklearn.preprocessing import StandardScaler, RobustScaler, label_binarize
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import (
-    f1_score, classification_report, confusion_matrix, ConfusionMatrixDisplay,
-    roc_curve, auc, precision_recall_curve, average_precision_score
-)
+from sklearn.metrics import f1_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.inspection import permutation_importance
 from sklearn.decomposition import PCA
 
@@ -31,10 +16,103 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
 
+from sklearn.base import BaseEstimator, TransformerMixin
+
+L_SH, R_SH = 11, 12
+L_EL, R_EL = 13, 14
+L_WR, R_WR = 15, 16
+SYMM_PAIRS = [(L_SH, R_SH), (L_EL, R_EL), (L_WR, R_WR)]
+NK = 33
+
+#Stabilize numeric inputs before modeling:
+#   Replace NaN/±Inf with 0
+#    Clip each feature to robust quantile limits to reduce outlier impact
+
+class Sanitize(BaseEstimator, TransformerMixin):
+    def __init__(self, q_low=0.001, q_high=0.999):
+        self.q_low = q_low
+        self.q_high = q_high
+        
+    def fit(self, X, y=None):
+        Xf = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        self.lo_ = np.quantile(Xf, self.q_low, axis=0)
+        self.hi_ = np.quantile(Xf, self.q_high, axis=0)
+        return self
+    
+    def transform(self, X):
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        return np.clip(X, self.lo_, self.hi_)
+
+
+#Make skeletons comparable across patients/cameras by enforcing:
+#   Translation invariance  -   center at keypoint centroid
+#   Scale invariance    -   divide by RMS body size
+#   Rotation invariance -   align first principal axis to +x
+class PoseNorm(BaseEstimator, TransformerMixin):
+    def __init__(self, n_keypoints=NK, eps=1e-9):
+        self.n_keypoints = n_keypoints
+        self.eps = eps
+        
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        N = X.shape[0]
+        nk = self.n_keypoints
+        means = X[:, :2*nk].reshape(N, nk, 2)
+        stds  = X[:, 2*nk:].reshape(N, nk, 2)
+
+        # 1) Center at centroid
+        centroid = means.mean(axis=1, keepdims=True)
+        m = means - centroid
+
+        # 2) Scale by RMS size
+        size = np.sqrt((m**2).sum(axis=(1,2)) / nk).reshape(N, 1, 1)
+        size = np.maximum(size, self.eps)
+        m /= size
+        stds /= size
+
+        # 3) Rotate so first principal axis aligns with +x
+        m_rot = np.empty_like(m)
+        s_rot = np.empty_like(stds)
+        for i in range(N):
+            C = (m[i].T @ m[i]) / nk              # 2×2 covariance
+            _, V = np.linalg.eigh(C)              # ascending eigenvalues
+            R = V[:, [1, 0]]                      # principal axis first column
+            if np.linalg.det(R) < 0:
+                R[:, 1] *= -1                      # ensure right-handed
+            m_rot[i] = m[i] @ R
+            s_rot[i] = stds[i] @ R
+
+        return np.concatenate([m_rot.reshape(N, -1), s_rot.reshape(N, -1)], axis=1)
+
+class SymmetryFeatures(BaseEstimator, TransformerMixin):
+    def __init__(self, pairs, n_keypoints=33):
+        self.pairs = pairs
+        self.n_keypoints = n_keypoints
+        
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        N = X.shape[0]
+        nk = self.n_keypoints
+        means = X[:, :2*nk].reshape(N, nk, 2)
+        extras = []
+        
+        for (L, R) in self.pairs:
+            sym_mag = np.linalg.norm(means[:, L, :] - means[:, R, :], axis=1, keepdims=True)
+            extras.append(sym_mag)
+            
+        if extras:
+            return np.concatenate([X, np.hstack(extras)], axis=1)
+        return X
+
 X_df = pd.read_pickle("Xtrain1.pkl")
 y = np.load("Ytrain1.npy")
 
 X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
+assert X.shape[1] == 132, f"Expected 132 features, got {X.shape[1]}"
 
 patients = X_df["Patient_Id"].to_numpy()
 unique_patients = np.unique(patients)
@@ -49,28 +127,34 @@ test_mask  = np.isin(patients, test_patients)
 X_train, y_train, g_train = X[train_mask], y[train_mask], patients[train_mask]
 X_test,  y_test,  g_test  = X[test_mask],  y[test_mask],  patients[test_mask]
 
+pre_base = [
+    ("sanitize", Sanitize()),
+    ("posenorm", PoseNorm(n_keypoints=NK)),
+    ("symmetry", SymmetryFeatures(SYMM_PAIRS, n_keypoints=NK)),
+]
+
 pipelines = {
-    "rf": Pipeline([
+    "rf": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", RandomForestClassifier(class_weight="balanced", random_state=42, n_jobs=-1))
     ]),
-    "extratrees": Pipeline([
+    "extratrees": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", ExtraTreesClassifier(random_state=42, n_jobs=-1))
     ]),
-    "gb": Pipeline([
+    "gb": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", GradientBoostingClassifier(random_state=42))
     ]),
-    "svc_rbf": Pipeline([
+    "svc_rbf": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=42))
     ]),
-    "logreg": Pipeline([
+    "logreg": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(class_weight="balanced", solver="lbfgs", max_iter=2000, random_state=42))
     ]),
-    "mlp": Pipeline([
+    "mlp": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", MLPClassifier(
             hidden_layer_sizes=(128, 64),
@@ -80,7 +164,7 @@ pipelines = {
             n_iter_no_change=20,
             random_state=42))
     ]),
-    "knn": Pipeline([
+    "knn": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", KNeighborsClassifier())
     ]),
@@ -88,34 +172,41 @@ pipelines = {
 
 param_grids = {
     "rf": {
+        "scaler": [StandardScaler(), RobustScaler()],
         "clf__n_estimators": [300, 600],
         "clf__max_depth": [None, 12, 18],
         "clf__min_samples_split": [2, 4],
     },
     "extratrees": {
+        "scaler": [StandardScaler(), RobustScaler()],
         "clf__n_estimators": [300, 600],
         "clf__max_depth": [None, 12, 18],
         "clf__min_samples_split": [2, 4],
         "clf__max_features": ["sqrt", "log2", None],
     },
     "gb": {
+        "scaler": [StandardScaler(), RobustScaler()],
         "clf__n_estimators": [200, 400],
         "clf__learning_rate": [0.05, 0.1],
         "clf__max_depth": [2, 3],
         "clf__subsample": [1.0, 0.8],
     },
     "svc_rbf": {
+        "scaler": [StandardScaler(), RobustScaler()],
         "clf__C": [0.5, 1, 2, 4],
         "clf__gamma": ["scale", 0.05, 0.02, 0.01],
     },
     "logreg": {
+        "scaler": [StandardScaler(), RobustScaler()],
         "clf__C": [0.5, 1, 2, 4]
     },
     "mlp": {
+        "scaler": [StandardScaler(), RobustScaler()],
         "clf__hidden_layer_sizes": [(128, 64), (256, 128)],
         "clf__alpha": [1e-4, 1e-3],
     },
     "knn": {
+        "scaler": [StandardScaler(), RobustScaler()],
         "clf__n_neighbors": [3, 5, 7, 9],
         "clf__weights": ["uniform", "distance"],
         "clf__p": [1, 2],
@@ -144,7 +235,7 @@ for name, pipe in pipelines.items():
         refit=True,
         return_train_score=False,
     )
-    grid.fit(X_train, y_train, **({"groups": g_train}))
+    grid.fit(X_train, y_train, groups=g_train)
 
     y_pred_test = grid.predict(X_test)
     f1 = f1_score(y_test, y_pred_test, average="macro")
@@ -167,6 +258,7 @@ for name, pipe in pipelines.items():
         best_grid = grid
 
 print(f"\nBest model: {best_name} | Test F1_macro: {best_test_f1:.4f}\n")
+
 
 plt.figure(figsize=(7,4))
 names, vals = zip(*sorted(scores.items(), key=lambda kv: kv[1], reverse=True))
@@ -214,7 +306,6 @@ elif mlp_loss_curve is not None:
     plt.grid(True, alpha=0.3)
     plt.tight_layout(); plt.show()
 
-
 train_sizes, train_scores, val_scores = learning_curve(
     best_model, X_train, y_train,
     groups=g_train,
@@ -238,21 +329,6 @@ plt.grid(True, alpha=0.3)
 plt.legend()
 plt.tight_layout()
 plt.show()
-
-
-perm = permutation_importance(
-    best_model, X_test, y_test, scoring="f1_macro",
-    n_repeats=10, random_state=42, n_jobs=-1
-)
-imp_idx = np.argsort(perm.importances_mean)[::-1][:15]
-plt.figure(figsize=(7,5))
-plt.barh(range(len(imp_idx)), perm.importances_mean[imp_idx][::-1], xerr=perm.importances_std[imp_idx][::-1])
-plt.yticks(range(len(imp_idx)), [f"f{j}" for j in imp_idx[::-1]])
-plt.xlabel("Mean ΔF1 (permutation)")
-plt.title("Top-15 Permutation Importances (TEST)")
-plt.tight_layout()
-plt.show()
-
 
 scaler_for_pca = StandardScaler().fit(X_train)
 X_train_std = scaler_for_pca.transform(X_train)
