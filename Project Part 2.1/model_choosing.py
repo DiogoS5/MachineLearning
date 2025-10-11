@@ -138,21 +138,9 @@ pipelines = {
         ("scaler", StandardScaler()),
         ("clf", RandomForestClassifier(class_weight="balanced", random_state=42, n_jobs=-1))
     ]),
-    "extratrees": Pipeline(pre_base + [
-        ("scaler", StandardScaler()),
-        ("clf", ExtraTreesClassifier(random_state=42, n_jobs=-1))
-    ]),
-    "gb": Pipeline(pre_base + [
-        ("scaler", StandardScaler()),
-        ("clf", GradientBoostingClassifier(random_state=42))
-    ]),
     "svc_rbf": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=42))
-    ]),
-    "logreg": Pipeline(pre_base + [
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(class_weight="balanced", solver="lbfgs", max_iter=2000, random_state=42))
     ]),
     "mlp": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
@@ -177,28 +165,11 @@ param_grids = {
         "clf__max_depth": [None, 12, 18],
         "clf__min_samples_split": [2, 4],
     },
-    "extratrees": {
-        "scaler": [StandardScaler(), RobustScaler()],
-        "clf__n_estimators": [300, 600],
-        "clf__max_depth": [None, 12, 18],
-        "clf__min_samples_split": [2, 4],
-        "clf__max_features": ["sqrt", "log2", None],
-    },
-    "gb": {
-        "scaler": [StandardScaler(), RobustScaler()],
-        "clf__n_estimators": [200, 400],
-        "clf__learning_rate": [0.05, 0.1],
-        "clf__max_depth": [2, 3],
-        "clf__subsample": [1.0, 0.8],
-    },
     "svc_rbf": {
         "scaler": [StandardScaler(), RobustScaler()],
         "clf__C": [0.5, 1, 2, 4],
+        "clf__kernel": ["linear", "rbf"],
         "clf__gamma": ["scale", 0.05, 0.02, 0.01],
-    },
-    "logreg": {
-        "scaler": [StandardScaler(), RobustScaler()],
-        "clf__C": [0.5, 1, 2, 4]
     },
     "mlp": {
         "scaler": [StandardScaler(), RobustScaler()],
@@ -224,6 +195,7 @@ mlp_val_scores = None
 
 for name, pipe in pipelines.items():
     print(f"\nTraining {name} with GridSearchCV (GroupKFold, scoring='f1_macro')...")
+    
     grid = GridSearchCV(
         estimator=pipe,
         param_grid=param_grids.get(name, {}),
