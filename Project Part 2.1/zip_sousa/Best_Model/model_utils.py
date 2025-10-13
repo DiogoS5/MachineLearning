@@ -1,21 +1,4 @@
 import numpy as np
-import pandas as pd
-import pickle
-import matplotlib.pyplot as plt
-
-from sklearn.model_selection import train_test_split, GridSearchCV, learning_curve, GroupKFold
-from sklearn.preprocessing import StandardScaler, RobustScaler, label_binarize
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import f1_score, confusion_matrix, ConfusionMatrixDisplay
-from sklearn.inspection import permutation_importance
-from sklearn.decomposition import PCA
-
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, GradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
-from sklearn.neighbors import KNeighborsClassifier
-
 from sklearn.base import BaseEstimator, TransformerMixin
 
 L_SH, R_SH = 11, 12
@@ -172,39 +155,3 @@ class MirrorLeftToRightBody(BaseEstimator, TransformerMixin):
 
             X_out[i] = np.concatenate([means.flatten(), stds.flatten()])
         return X_out
-
-def main():
-    # Load data
-    X_df = pd.read_pickle("Xtrain1.pkl")
-    y = np.load("Ytrain1.npy")
-    X = np.stack(X_df["Skeleton_Features"].to_numpy()).astype(float)
-    assert X.shape[1] == 132, f"Expected 132 features, got {X.shape[1]}"
-
-    # Build the final training pipeline using YOUR classes
-    pipe = Pipeline([
-        ("sanitize", Sanitize()),
-        ("posenorm_tv", PoseNorm1(n_keypoints=NK)),                     # your torso-based normalizer
-        ("mirror",     MirrorLeftToRightBody(n_keypoints=NK)),          # your mirroring step
-        ("symmetry",   SymmetryFeatures(SYMM_PAIRS, n_keypoints=NK)),   # your symmetry extras
-        ("scaler",     StandardScaler()),
-        ("clf", SVC(kernel="rbf", C=2, gamma="scale",
-                    class_weight="balanced", probability=True, random_state=42)),
-    ])
-
-    print("Fitting SVC(RBF) on ALL data with current pipeline...")
-    pipe.fit(X, y)
-    print("Done.")
-
-    # Optional quick sanity check on TRAIN set
-    y_hat = pipe.predict(X)
-    f1_tr = f1_score(y, y_hat, average="macro")
-    print(f"Training F1_macro (on all data): {f1_tr:.4f}")
-
-    # Save the trained pipeline
-    out_path = "svc_rbf_final.pkl"
-    with open(out_path, "wb") as f:
-        pickle.dump(pipe, f)
-    print(f"Saved final SVC(RBF) pipeline to: {out_path}")
-
-if __name__ == "__main__":
-    main()
