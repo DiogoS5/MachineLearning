@@ -4,9 +4,30 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
+CLASS_NAME = {
+    0: "Left",
+    1: "Right",
+}
+
+EXERCISE_NAME = {
+    "E1": "Brushing Hair",
+    "E2": "Brushing Teeth",
+    "E3": "Washing Face",
+    "E4": "Putting on Socks",
+    "E5": "Hip Flexion",
+}
+
+#INPUT PARAMETERS
+EXERCISE = 100
+SKIP = 3  # Number of frames to skip for faster animation
+
 # Load data
 X1 = pd.read_pickle("Xtrain2.pkl")
 y = np.load("Ytrain2.npy")
+
+patient = X1['Patient_Id'].values[EXERCISE]
+impairment = CLASS_NAME[y[patient - 1]]
+exercise_type = X1['Exercise_Id'].values[EXERCISE]
 
 skeleton_sequences = X1['Skeleton_Sequence'].values
 sequence = skeleton_sequences[1]
@@ -26,11 +47,14 @@ skeleton_edges = [
 fig, ax = plt.subplots(figsize=(6, 6))
 plt.ion()  # Turn on interactive mode
 
-for i, frame in enumerate(sequence_array):
+for i in range(0, len(sequence_array), SKIP):
+    frame = sequence_array[i]
     ax.clear()
-    ax.set_title(f'Frame {i+1}/{sequence_array.shape[0]}')
+    ax.set_title(f'Patient {patient}, Impairment: {impairment}, '
+                 f'Exercise: {EXERCISE_NAME[exercise_type]}, Frame {i+1}/{sequence_array.shape[0]}')
     ax.set_xlim(-1, 1)
     ax.set_ylim(-1, 1)
+    ax.invert_yaxis()
     ax.set_aspect('equal', adjustable='box')
 
     for kp in range(33):
