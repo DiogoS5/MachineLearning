@@ -18,7 +18,7 @@ EXERCISE_NAME = {
 }
 
 #INPUT PARAMETERS
-EXERCISE = 100
+EXERCISE = 300
 SKIP = 3  # Number of frames to skip for faster animation
 
 # Load data
@@ -30,7 +30,7 @@ impairment = CLASS_NAME[y[patient - 1]]
 exercise_type = X1['Exercise_Id'].values[EXERCISE]
 
 skeleton_sequences = X1['Skeleton_Sequence'].values
-sequence = skeleton_sequences[1]
+sequence = skeleton_sequences[EXERCISE]
 sequence_array = np.array(sequence)
 sequence_array = sequence_array.reshape(-1, 33, 2)
 
