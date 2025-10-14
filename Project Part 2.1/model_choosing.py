@@ -15,7 +15,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
-
 from sklearn.base import BaseEstimator, TransformerMixin
 
 L_SH, R_SH = 11, 12
@@ -23,10 +22,6 @@ L_EL, R_EL = 13, 14
 L_WR, R_WR = 15, 16
 SYMM_PAIRS = [(L_SH, R_SH), (L_EL, R_EL), (L_WR, R_WR)]
 NK = 33
-
-#Stabilize numeric inputs before modeling:
-#   Replace NaN/±Inf with 0
-#    Clip each feature to robust quantile limits to reduce outlier impact
 
 class Sanitize(BaseEstimator, TransformerMixin):
     def __init__(self, q_low=0.001, q_high=0.999):
@@ -44,47 +39,62 @@ class Sanitize(BaseEstimator, TransformerMixin):
         return np.clip(X, self.lo_, self.hi_)
 
 
-#Make skeletons comparable across patients/cameras by enforcing:
-#   Translation invariance  -   center at keypoint centroid
-#   Scale invariance    -   divide by RMS body size
-#   Rotation invariance -   align first principal axis to +x
-class PoseNorm(BaseEstimator, TransformerMixin):
+class PoseNorm1(BaseEstimator, TransformerMixin):
     def __init__(self, n_keypoints=NK, eps=1e-9):
         self.n_keypoints = n_keypoints
         self.eps = eps
-        
+
     def fit(self, X, y=None):
         return self
-    
+
     def transform(self, X):
-        N = X.shape[0]
-        nk = self.n_keypoints
-        means = X[:, :2*nk].reshape(N, nk, 2)
-        stds  = X[:, 2*nk:].reshape(N, nk, 2)
+        n_samples  = X.shape[0]
+        n_keypoints = self.n_keypoints
 
-        # 1) Center at centroid
-        centroid = means.mean(axis=1, keepdims=True)
-        m = means - centroid
+        # Split into mean and std coordinates
+        mean_coords = X[:, :2 * n_keypoints].reshape(n_samples, n_keypoints, 2)
+        std_coords  = X[:, 2 * n_keypoints:].reshape(n_samples, n_keypoints, 2)
 
-        # 2) Scale by RMS size
-        size = np.sqrt((m**2).sum(axis=(1,2)) / nk).reshape(N, 1, 1)
-        size = np.maximum(size, self.eps)
-        m /= size
-        stds /= size
+        # Indices for torso/head distances
+        shoulders = [11, 12]
+        hips = [23, 24]
+        head_idx = 0
+        torso_indices = shoulders + hips  # [11,12,23,24]
 
-        # 3) Rotate so first principal axis aligns with +x
-        m_rot = np.empty_like(m)
-        s_rot = np.empty_like(stds)
-        for i in range(N):
-            C = (m[i].T @ m[i]) / nk              # 2×2 covariance
-            _, V = np.linalg.eigh(C)              # ascending eigenvalues
-            R = V[:, [1, 0]]                      # principal axis first column
-            if np.linalg.det(R) < 0:
-                R[:, 1] *= -1                      # ensure right-handed
-            m_rot[i] = m[i] @ R
-            s_rot[i] = stds[i] @ R
+        torso_centroid = mean_coords[:, torso_indices].mean(axis=1)  # (n_samples, 2)
 
-        return np.concatenate([m_rot.reshape(N, -1), s_rot.reshape(N, -1)], axis=1)
+        shoulder_distance = np.linalg.norm(
+            mean_coords[:, shoulders[0]] - mean_coords[:, shoulders[1]], axis=1
+        )  # (n_samples,)
+
+        # Head-to-mid-hip distance (vertical scale)
+        mid_hip = mean_coords[:, hips].mean(axis=1)  # (n_samples, 2)
+        vertical_distance = np.linalg.norm(
+            mean_coords[:, head_idx] - mid_hip, axis=1
+        )  # (n_samples,)
+
+        # Avoid divide-by-zero
+        shoulder_distance = np.where(shoulder_distance == 0, 1.0, shoulder_distance)
+        vertical_distance = np.where(vertical_distance == 0, 1.0, vertical_distance)
+
+        # Center at torso centroid
+        mean_centered = mean_coords - torso_centroid[:, None, :]
+
+        # Anisotropic scaling
+        mean_normalized = np.empty_like(mean_centered)
+        mean_normalized[:, :, 0] = mean_centered[:, :, 0] / shoulder_distance[:, None]
+        mean_normalized[:, :, 1] = mean_centered[:, :, 1] / vertical_distance[:, None]
+
+        std_normalized = np.empty_like(std_coords)
+        std_normalized[:, :, 0] = std_coords[:, :, 0] / shoulder_distance[:, None]
+        std_normalized[:, :, 1] = std_coords[:, :, 1] / vertical_distance[:, None]
+
+        # Flatten back to (n_samples, 132)
+        return np.concatenate(
+            [mean_normalized.reshape(n_samples, -1),
+             std_normalized.reshape(n_samples, -1)],
+            axis=1
+        )
 
 class SymmetryFeatures(BaseEstimator, TransformerMixin):
     def __init__(self, pairs, n_keypoints=33):
@@ -108,6 +118,60 @@ class SymmetryFeatures(BaseEstimator, TransformerMixin):
             return np.concatenate([X, np.hstack(extras)], axis=1)
         return X
 
+# For side detection and mirroring
+left_arm  = [13, 15, 17, 19, 21]
+right_arm = [14, 16, 18, 20, 22]
+
+# Left/right index swaps (include head/face)
+LEFT_POINTS  = [1, 2, 3, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]
+RIGHT_POINTS = [4, 5, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32]
+
+def detect_mov_side(feats_132):
+    """Heuristic: compare summed stds of left vs right arm keypoints."""
+    stds = feats_132[66:].reshape(33, 2)
+    left_std_sum  = np.sum(stds[left_arm])
+    right_std_sum = np.sum(stds[right_arm])
+    return 'left' if left_std_sum >= right_std_sum else 'right'
+
+class MirrorLeftToRightBody(BaseEstimator, TransformerMixin):
+    """Mirror samples detected as LEFT to RIGHT (reflect x about torso-centroid; swap L/R indices)."""
+    def __init__(self, n_keypoints=NK, enable=True):
+        self.n_keypoints = n_keypoints
+        self.enable = enable
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        if not self.enable:
+            return X
+        N  = X.shape[0]
+        nk = self.n_keypoints
+        X_out = np.empty_like(X)
+        for i in range(N):
+            feats = X[i].copy()
+            means = feats[:2*nk].reshape(nk, 2)
+            stds  = feats[2*nk:].reshape(nk, 2)
+
+            side = detect_mov_side(feats)
+            if side == "left":
+                torso_indices = [11, 12, 23, 24]
+                centroid = means[torso_indices].mean(axis=0)
+
+                means_m = means.copy()
+                stds_m  = stds.copy()
+
+                means_m[:, 0] = 2 * centroid[0] - means[:, 0]
+
+                for l, r in zip(LEFT_POINTS, RIGHT_POINTS):
+                    means_m[l], means_m[r] = means_m[r].copy(), means_m[l].copy()
+                    stds_m[l],  stds_m[r]  = stds_m[r].copy(),  stds_m[l].copy()
+
+                means, stds = means_m, stds_m
+
+            X_out[i] = np.concatenate([means.flatten(), stds.flatten()])
+        return X_out
+
 X_df = pd.read_pickle("Xtrain1.pkl")
 y = np.load("Ytrain1.npy")
 
@@ -129,8 +193,9 @@ X_test,  y_test,  g_test  = X[test_mask],  y[test_mask],  patients[test_mask]
 
 pre_base = [
     ("sanitize", Sanitize()),
-    ("posenorm", PoseNorm(n_keypoints=NK)),
-    ("symmetry", SymmetryFeatures(SYMM_PAIRS, n_keypoints=NK)),
+    ("posenorm_tv", PoseNorm1(n_keypoints=NK)),
+    ("mirror", MirrorLeftToRightBody(n_keypoints=NK)),
+    ("symmetry",  SymmetryFeatures(SYMM_PAIRS, n_keypoints=NK)),
 ]
 
 pipelines = {
@@ -138,21 +203,9 @@ pipelines = {
         ("scaler", StandardScaler()),
         ("clf", RandomForestClassifier(class_weight="balanced", random_state=42, n_jobs=-1))
     ]),
-    "extratrees": Pipeline(pre_base + [
-        ("scaler", StandardScaler()),
-        ("clf", ExtraTreesClassifier(random_state=42, n_jobs=-1))
-    ]),
-    "gb": Pipeline(pre_base + [
-        ("scaler", StandardScaler()),
-        ("clf", GradientBoostingClassifier(random_state=42))
-    ]),
     "svc_rbf": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
         ("clf", SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=42))
-    ]),
-    "logreg": Pipeline(pre_base + [
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(class_weight="balanced", solver="lbfgs", max_iter=2000, random_state=42))
     ]),
     "mlp": Pipeline(pre_base + [
         ("scaler", StandardScaler()),
@@ -177,28 +230,11 @@ param_grids = {
         "clf__max_depth": [None, 12, 18],
         "clf__min_samples_split": [2, 4],
     },
-    "extratrees": {
-        "scaler": [StandardScaler(), RobustScaler()],
-        "clf__n_estimators": [300, 600],
-        "clf__max_depth": [None, 12, 18],
-        "clf__min_samples_split": [2, 4],
-        "clf__max_features": ["sqrt", "log2", None],
-    },
-    "gb": {
-        "scaler": [StandardScaler(), RobustScaler()],
-        "clf__n_estimators": [200, 400],
-        "clf__learning_rate": [0.05, 0.1],
-        "clf__max_depth": [2, 3],
-        "clf__subsample": [1.0, 0.8],
-    },
     "svc_rbf": {
         "scaler": [StandardScaler(), RobustScaler()],
         "clf__C": [0.5, 1, 2, 4],
+        "clf__kernel": ["linear", "rbf"],
         "clf__gamma": ["scale", 0.05, 0.02, 0.01],
-    },
-    "logreg": {
-        "scaler": [StandardScaler(), RobustScaler()],
-        "clf__C": [0.5, 1, 2, 4]
     },
     "mlp": {
         "scaler": [StandardScaler(), RobustScaler()],
@@ -224,6 +260,7 @@ mlp_val_scores = None
 
 for name, pipe in pipelines.items():
     print(f"\nTraining {name} with GridSearchCV (GroupKFold, scoring='f1_macro')...")
+    
     grid = GridSearchCV(
         estimator=pipe,
         param_grid=param_grids.get(name, {}),
@@ -330,20 +367,31 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-scaler_for_pca = StandardScaler().fit(X_train)
-X_train_std = scaler_for_pca.transform(X_train)
-X_test_std  = scaler_for_pca.transform(X_test)
+preprocess_for_pca = Pipeline(pre_base + [
+    ("scaler_before_pca", StandardScaler())
+])
+
+# Fit preprocessing on TRAIN only, then transform ALL for plotting
+preprocess_for_pca.fit(X_train, y_train)
+X_all_std   = preprocess_for_pca.transform(X)
+X_train_std = X_all_std[train_mask]
+X_test_std  = X_all_std[test_mask]
 
 pca = PCA(n_components=2, random_state=42).fit(X_train_std)
-X_all_2d = pca.transform(scaler_for_pca.transform(X))
+X_all_2d = pca.transform(X_all_std)
 
-plt.figure(figsize=(6.2,5.2))
+# ---- Plot ----
+plt.figure(figsize=(6.2, 5.2))
 classes = np.sort(np.unique(y))
 for c in classes:
-    plt.scatter(X_all_2d[y == c, 0], X_all_2d[y == c, 1], alpha=0.6, label=f"Class {c}", s=18)
+    pts = X_all_2d[y == c]
+    plt.scatter(pts[:, 0], pts[:, 1], alpha=0.6, label=f"Class {c}", s=18)
+
+evr = pca.explained_variance_ratio_ * 100
 plt.legend(title="Class")
-plt.title("PCA (2D) of Skeleton Features (PCA fit on TRAIN)")
-plt.xlabel("PC1"); plt.ylabel("PC2")
+plt.title("PCA (2D) of Pipeline-Transformed Features (PoseNorm → Scale; PCA fit on TRAIN)")
+plt.xlabel(f"PC1 ({evr[0]:.1f}%)")
+plt.ylabel(f"PC2 ({evr[1]:.1f}%)")
 plt.grid(True, alpha=0.2)
 plt.tight_layout()
 plt.show()
