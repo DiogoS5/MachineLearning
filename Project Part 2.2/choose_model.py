@@ -317,8 +317,6 @@ for name, pipe in pipelines.items():
     print("Best params:", grid.best_params_)
 
     y_pred_rows = grid.predict(X_test_df)
-    print(f"{name} — y_pred (row-level, len={len(y_pred_rows)}):")
-    print(y_pred_rows)
 
     bal_acc_row = balanced_accuracy_score(y_test, y_pred_rows)
     scores_row[name] = bal_acc_row
@@ -329,7 +327,6 @@ for name, pipe in pipelines.items():
 
     bal_acc_pat = balanced_accuracy_score(y_true_pat, y_pred_pat)
     scores_pat[name] = bal_acc_pat
-    print(f"{name} — TEST balanced acc (patient-level): {bal_acc_pat:.4f}")
 
     print("\nPatient-level predictions:")
     print("patient_ids:     ", pids_sorted)
@@ -342,8 +339,7 @@ for name, pipe in pipelines.items():
         best.update({"name": name, "bal_acc_pat": bal_acc_pat, "est": grid.best_estimator_, "grid": grid})
 
 print("\nPer-model TEST balanced accuracy (row-level):",{k: f"{v:.4f}" for k, v in scores_row.items()})
-print("Per-model TEST balanced accuracy (patient-level):",{k: f"{v:.4f}" for k, v in scores_pat.items()})
-print(f"Best model by patient-level metric: {best['name']} | TEST balanced acc (patient): {best['bal_acc_pat']:.4f}")
+print(f"Best model by patient-level metric: {best['name']}")
 
 best_est = best["est"]
 y_hat_rows = best_est.predict(X_test_df)
